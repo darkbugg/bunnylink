@@ -247,7 +247,7 @@ def test6():
                 app_meta="/path/to/app/script.py",
                 message_type="type.of.message",
                 corellation_id=payload.corellation_id,
-                body="thi is the rpc response"
+                body="this is the rpc response"
             ))
 
             return self.send(reply)
@@ -275,32 +275,34 @@ def test6():
     time.sleep(5)
     logging.info("Now putting a message on the queue")
 
-    payload = Payload(**dict(
-        routing_key="rk_rpc_server",
-        exchange="message",
-        host="hostname.here",
-        app="app.name",
-        app_meta="/path/to/app/script.py",
-        message_type="type.of.message",
-
-        # these are not needed if using the query method
-        # which adds this information automatically
-        # corellation_id=5344,           # corellation id used in RPC
-        # reply_to='rk_rpc_client_response',         #
-        # channel to reply to if RPC
-
-        body="this is the rpc query"
-    ))
-
     while True:
         try:
             for i in xrange(100):
+
+                payload = Payload(**dict(
+                    routing_key="rk_rpc_server",
+                    exchange="message",
+                    host="hostname.here",
+                    app="app.name",
+                    app_meta="/path/to/app/script.py",
+                    message_type="type.of.message",
+
+                    # these are not needed if using the query method
+                    # which adds this information automatically
+                    # corellation_id=5344,           # corellation id used in RPC
+                    # reply_to='rk_rpc_client_response',         #
+                    # channel to reply to if RPC
+
+                    body="this is the rpc query"
+                ))
+
                 try:
                     rpc_client.query(payload, query_hint=payload)
                 except OfflineError as e:
                     logging.error(str(e))
                 except Exception as e:
-                    logging.error("Unhandled error while trying to send", exc_info=True)
+                    logging.error(
+                        "Unhandled error while trying to send", exc_info=True)
                 time.sleep(5)
         except KeyboardInterrupt:
             rpc_client.stop()

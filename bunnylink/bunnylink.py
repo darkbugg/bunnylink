@@ -810,6 +810,10 @@ class Client(threading.Thread):
         self._logger = logging.getLogger(logger_name)
         self._logger.setLevel(log_level)
 
+        # if a message can not be sent right away, it will be queued to this
+        # FIFO
+        self._undispatched_messages = []
+
     def _check_threads(self):
 
         publisher_restarted, consumer_restarted = False, False
@@ -843,8 +847,9 @@ class Client(threading.Thread):
                 while True:
                     # get status updates from our worker (publisher and consumer)
                     # and reflect them onto local variables
-                    setattr(self, attrname, queue.get_nowait())
-                    attrval = getattr(self, attrname)
+                    attrval = queue.get_nowait()
+                    queue.task_done()
+                    setattr(self, attrname, attrval)
                     if attrval is True:
                         self._logger.warning("%s is now online" % name)
                     else:
@@ -888,7 +893,20 @@ class Client(threading.Thread):
                     self._logger.error(
                         "on_message raised unknown exception", exc_info=True)
             except Queue.Empty:
-                pass
+
+                if self._can_send is False:
+                    continue
+
+                # no received messages, try to dispatch previously unset
+                # messages
+                try:
+                    payload, log_payload = self._undispatched_messages.pop(0)
+                    self.send(payload, log_payload)
+                except IndexError:
+                    # no unset messages
+                    continue
+                except OfflineError:
+                    continue
 
         self._logger.info("Stopping the subthreads")
         self._publisher.stop()
@@ -937,11 +955,16 @@ class Client(threading.Thread):
                 "Sending message *** message body not shown ***")
 
         if self._can_send:
-            payload.published_at = datetime.datetime.now()
+            if payload.published_at is None:
+                payload.published_at = datetime.datetime.now()
             self._outbound.put_nowait(payload)
         else:
+            self._undispatched_messages.append((payload, log_payload))
+            undispatched = ", ".join(
+                [pl.corellation_id for (pl, _) in self._undispatched_messages])
+            self._logger.debug("Undispatched uuid: %s" % undispatched)
             raise OfflineError(
-                'publisher is not able to process messages at this time')
+                'publisher is not able to process messages at this time.')
 
     def stop(self):
         self._logger.info('Stopping')
@@ -981,6 +1004,7 @@ class RPCClient(Client):
             if query_hint is None:
                 self._logger.warning(
                     "Received RPC reply %s does not match an ongoing query" % payload.corellation_id)
+                self._logger.error(payload.to_json())
                 return
 
             del self._unanswered_queries[payload.corellation_id]
@@ -1129,7 +1153,7 @@ class Payload(dict):
 
         # at what time was this message published. ISO 8601: Example:
         # 2007-04-06T21:35.12.000000
-        self.published_at = kwargs.get('published_at')
+        self.published_at = kwargs.get('published_at', None)
         # if self.published_at is None:
         #     creation_errors.append(
         #         'Message payload is missing "published_at". ISO 8601 (ex 2007-04-06T21:35.123) datetime representing the moment this message was published.')
